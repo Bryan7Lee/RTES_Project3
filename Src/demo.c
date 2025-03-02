@@ -106,7 +106,7 @@ void run_demo()
 {
 	// variables
 	char inputChar; // one character read from UART to add to input buffer array
-	uint32_t input_index = 0;
+	uint32_t input_index = 0; // ASDH
 
 	// fresh start
 	memset(userCommandInput, '\0', USER_COMMAND_INPUT_LENGTH);
