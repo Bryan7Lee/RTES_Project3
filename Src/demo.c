@@ -6,8 +6,8 @@
 #include <pthread.h>
 
 #include "demo.h"
-#include "UART.h"
 #include "stm32l476xx.h"
+#include "UART.h"
 
 uint32_t recipe[15] = {
 		MOV+0,
@@ -26,154 +26,42 @@ uint32_t recipe[15] = {
 		MOV+5,
 		RECIPE_END
 };
+//uint32_t recipe[15] = {
+//		MOV+1,
+//		WAIT+10,
+//		MOV+5,
+//		WAIT+10,
+//		MOV+0,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END,
+//		RECIPE_END
+//};
+uint32_t loop_recipe[15] = {0};
 
+// array for both servos
 servo servos[2];
-
-char input[100] = "N/A";
-char userCommandInput[USER_COMMAND_INPUT_LENGTH] = "NN"; // array should only need 4 entries; example. NN<CR><\0>
 
 // ints
 uint32_t five_bits = 0;
 uint32_t opcode = 0;
-uint32_t counter = 0; // systick timer
-uint32_t timer_val = 0;
-uint32_t servoOneIndex = 0; // recipe index for servo 1
-uint32_t servoTwoIndex = 0; // recipe index for servo 2
+uint32_t counter = 0;
+uint32_t moving_counter = 0;
 
 // booleans
-_Bool timer_done = false;
 _Bool servo_moved = false;
-_Bool in_mov = false;
-_Bool in_wait = false;
-_Bool new_input = false;
+_Bool step_done = false;
 
-servo run_recipe(uint32_t recipe[15])
-{
-	for (int i = 0; i < 15; i++){
-		five_bits = (recipe[i] & 0x1F);		// get last 5 bits of command
-		opcode = (recipe[i] & 0xE0);		// get opcode
-		if (opcode == MOV){					// handle MOV command
-			counter = 0;
-			in_mov = true;
-			TIM2->CCR1 = 6 + (4 * five_bits);
-			while(!servo_moved);
-			servo_moved = false;
-			in_mov = false;
-		}
-		else if (opcode == WAIT){			// handle WAIT command
-			timer_val = five_bits * 1600;
-			counter = 0;
-			in_wait = true;
-			while(!timer_done); 			// wait for specified amount of time
-			timer_done = false;
-			in_wait = false;
-		}
-		else if (opcode == LOOP){			// handle LOOP command
-			if (five_bits != 0){
-				uint32_t loop[20] = {0};
-				uint32_t loop_check = i+1;
-				uint32_t loop_index = 0;
-				// populate LOOP
-				while (1) {
-					if ((recipe[loop_check] & 0xE0) == END_LOOP){
-						break;
-					}
-					else {
-						loop[loop_index] = recipe[loop_check];
-						loop_check++;
-						loop_index++;
-					}
-				}
-				// perform LOOP
-				for (int j = 0; j < five_bits; j++){
-					run_recipe(loop);
-				}
-			}
-		}
-		else if (opcode == END_LOOP){		// handle loop end
-		}
-		else if (opcode == RECIPE_END){		// handle recipe end
-			//return 1;
-		}
-		else{								// handle illegal opcode
-			//return 0;
-		}
-	}
-	//return 1;
-}
+// buffers
+static uint8_t buffer[200];
+static char input_buffer[100]="This is garbage.\n";
 
-void run_demo()
-{
-	// variables
-	char inputChar; // one character read from UART to add to input buffer array
-	uint32_t input_index = 0; // ASDH
-
-	// fresh start
-	memset(userCommandInput, '\0', USER_COMMAND_INPUT_LENGTH);
-
-	// infinite non-blocking loop
-	while (1) {
-		inputChar = USART_Read_NB(USART2);
-		if (inputChar != 0x0D) // if <carriage return> was NOT entered
-		{
-			userCommandInput[input_index++] = inputChar;
-			printf("\r%s", userCommandInput);
-		}
-
-
-	}
-}
-
-//uint32_t do_command(uint32_t command){
-//	five_bits = (command & 0x1F);		// get last 5 bits of command
-//	opcode = (command & 0xE0);		// get opcode
-//	if (opcode == MOV){					// handle MOV command
-//		counter = 0;
-//		in_mov = true;
-//		TIM2->CCR1 = 6 + (4 * five_bits);
-//		while(!servo_moved);
-//		servo_moved = false;
-//		in_mov = false;
-//	}
-//	else if (opcode == WAIT){			// handle WAIT command
-//		timer_val = five_bits * 1600;
-//		counter = 0;
-//		in_wait = true;
-//		while(!timer_done); 			// wait for specified amount of time
-//		timer_done = false;
-//		in_wait = false;
-//	}
-//	else if (opcode == LOOP){			// handle LOOP command
-//		if (five_bits != 0){
-//			uint32_t loop[20] = {0};
-//			uint32_t loop_check = i+1;
-//			uint32_t loop_index = 0;
-//			// populate LOOP
-//			while (1) {
-//				if ((recipe[loop_check] & 0xE0) == END_LOOP){
-//					break;
-//				}
-//				else {
-//					loop[loop_index] = recipe[loop_check];
-//					loop_check++;
-//					loop_index++;
-//				}
-//			}
-//			// perform LOOP
-//			for (int j = 0; j < five_bits; j++){
-//				run_recipe(loop);
-//			}
-//		}
-//	}
-//	else if (opcode == END_LOOP){		// handle loop end
-//	}
-//	else if (opcode == RECIPE_END){		// handle recipe end
-//		return 1;
-//	}
-//	else{								// handle illegal opcode
-//		return 0;
-//	}
-//}
 
 //******************************************************************************************
 // This function is to handle SysTick Timer
@@ -181,60 +69,306 @@ void run_demo()
 void SysTick_Handler(void)
 {
 	counter++; // tick counter for three_seconds_elapsed variable for auto mode counting
+	moving_counter++;
 
-	if (in_wait && (counter > timer_val))
-	{
-		timer_done = true;
+	if (counter > 1600){
+		step_done = true;
 		counter = 0;
 	}
-	if (in_mov && (counter > 2000))
-	{
+	if (moving_counter > 2500){
 		servo_moved = true;
-		counter = 0;
+		moving_counter = 0;
 	}
 }
 
-	//valid_run = run_recipe(recipe);
-	//    if (!valid_run){
-	//    	UART_SendString("RECIPE ERROR: INVALID OPCODE FOUND\r\n");
-	//    }
-	//    else{
-	//    	UART_SendString("Recipe completed successfully\r\n");
-	//    }
+int printf (const char *format, ...) {
+    va_list aptr;
+    int ret;
 
-//	char buffer[10];
-//	int pulse_width = 26;  // Default 1ms pulse width
-//
-//	while (1) {
-//		// Prompt user for new pulse width
-//
-//		UART_SendString("Enter a command (valid options are P, C, R, L, N, S):");
-//
-//	    int i = 0;
-//	    char c;
-//
-//	    // Read input from UART
-//	    while ((c = UART_ReceiveChar()) != '\r') {
-//	        buffer[i++] = c;
-//	        UART_SendChar(c);  // Echo back the character
-//	    }
-//	    buffer[i] = '\0';  // Null-terminate the string
-//	    UART_SendString("\n\r");
-//
-//	    // Convert input to integer
-//	    pulse_width = atoi(buffer);
-//
-//	    // Validate pulse width (ensure it's between 10 and 200 microseconds)
-//	    if (pulse_width < 1 || pulse_width > 30) {
-//	        UART_SendString("Invalid input! Please enter a value between 4 and 20.\n\r");
-//	    } else {
-//	            // Adjust PWM duty cycle based on the user input
-//	        TIM2->CCR1 = pulse_width;
-//	        UART_SendString("Pulse width updated!\n\r");
-//	    }
-//
-//	}
+    __builtin_va_start(aptr, format);
+    ret = vsprintf ((char*)buffer, format, aptr);
+    __builtin_va_end(aptr);
 
+    USART_Write (USART2, buffer, ret);
+
+    return ret;
+}
+
+void perform_recipe_step(servo *serv){
+	if (serv -> inLoop){	// only enter when servo is in loop command
+		five_bits = (loop_recipe[serv -> loopStep] & 0x1F);		// get last 5 bits of command
+		opcode = (loop_recipe[serv -> loopStep] & 0xE0);		// get opcode
+		if (opcode == MOV){
+			moving_counter = 0;
+			if (serv -> id == 1){
+				TIM2->CCR1 = 6 + (4 * five_bits);
+			}
+			else if (serv -> id == 2){
+				TIM2->CCR2 = 6 + (4 * five_bits);
+			}
+			serv -> loopStep += 1;
+			serv -> position = five_bits;
+			while(!servo_moved){};
+			servo_moved = false;
+		}
+		else if (opcode == WAIT){
+			if (serv -> waitStep < five_bits){
+				serv -> waitStep += 1;
+			}
+			else {
+				serv -> waitStep = 1;
+				serv -> loopStep += 1;
+			}
+		}
+
+		if (serv -> loopRecipeLen == serv -> loopStep){
+			serv -> loopStep = 0;
+			serv -> loopCount++;
+			if (serv -> loopCount == serv -> loopIters){
+				serv -> loopCount = 0;
+				serv -> inLoop = false;
+				serv -> recipeStep += 1;
+			}
+		}
+	}
+	else {		// if servo is not in a loop command
+		five_bits = (recipe[serv -> recipeStep] & 0x1F);		// get last 5 bits of command
+		opcode = (recipe[serv -> recipeStep] & 0xE0);			// get opcode
+		if (opcode == MOV){
+			moving_counter = 0;
+			if (serv -> id == 1){
+				TIM2->CCR1 = 6 + (4 * five_bits);
+			}
+			else if (serv -> id == 2){
+				TIM2->CCR2 = 6 + (4 * five_bits);
+			}
+			serv -> recipeStep += 1;
+			serv -> position = five_bits;
+			while(!servo_moved){};
+			servo_moved = false;
+		}
+		else if (opcode == WAIT){
+			if (serv -> waitStep < five_bits){
+				serv -> waitStep += 1;
+			}
+			else {
+				serv -> waitStep = 1;
+				serv -> recipeStep += 1;
+			}
+		}
+		else if (opcode == LOOP){
+			if (five_bits == 0){
+				serv -> recipeStep += 1;
+			}
+			else {
+				serv -> loopIters = five_bits;
+				serv -> inLoop = true;
+				serv -> loopStep = 0;
+				serv -> loopCount = 0;
+				uint32_t loop_check = (serv -> recipeStep + 1);
+				uint32_t loop_index = 0;
+				memset(loop_recipe, 0, 15*sizeof(uint32_t));
+				// populate loop recipe
+				while (1) {
+					if ((recipe[loop_check] & 0xE0) == END_LOOP){
+						serv -> loopRecipeLen = loop_index;
+						break;
+					}
+					else {
+						loop_recipe[loop_index] = recipe[loop_check];
+						loop_check++;
+						loop_index++;
+					}
+				}
+			}
+		}
+		else if (opcode == END_LOOP){
+			serv -> recipeStep += 1;
+		}
+		else if (opcode == RECIPE_END){
+			serv -> recipeStep = 0;
+			serv -> recState = ended;
+			printf("Recipe completed\r\n\r\n");
+		}
+		else{
+			serv -> recipeStep = 0;
+			serv -> recState = error;
+			printf("Error in recipe!!\r\n\r\n");
+		}
+	}
+
+
+	return;
+}
+
+
+
+
+void run_demo(){
+	//pthread_create(NULL, NULL, nBGet, NULL);
+	char one_char;
+	int num_entered = 0;
+	char commands[2] = {'x', 'x'};
+
+	for (int i = 0; i < 2; i++){
+		servos[i].id = i+1;
+		servos[i].recipeStep = 0;
+		servos[i].recState = ended;
+		servos[i].loopIters = 0;
+		servos[i].loopStep = 0;
+		servos[i].loopRecipeLen = 0;
+		servos[i].inLoop = false;
+		servos[i].waitStep = 1;
+		servos[i].position = 0;
+	}
+
+	printf("\r\n%s\r\n", "Valid commands: p, c, r, l, n, s");
+	printf("> ");
+	uint32_t input_index = 0;
+	memset(input_buffer, 0, 100);
+
+	while (1)
+	{
+		// get input
+		one_char = USART_Read_NB(USART2);
+		if(one_char == 0x0D) // Enter Key
+		{
+			printf("\r\n%s\r\n", "\0");
+			printf("> ");
+			num_entered = 0;
+			commands[0] = input_buffer[input_index-2];
+			commands[1] = input_buffer[input_index-1];
+			memset(input_buffer, 0, 100);
+			input_index = 0;
+		}
+		else if((one_char != '\0') && (num_entered < 2))
+		{
+			if (one_char == 'p' || one_char == 'P' || 	\
+				one_char == 'c' || one_char == 'C' ||	\
+				one_char == 'r' || one_char == 'R' || 	\
+				one_char == 'l' || one_char == 'L' || 	\
+				one_char == 'n' || one_char == 'N' || 	\
+				one_char == 's' || one_char == 'S')
+			{
+				input_buffer[input_index++] = one_char;
+				printf("\r> %s", input_buffer);
+				num_entered++;
+			}
+		}
+
+		// perform recipe step for each servo
+		for (int i = 0; i < 2; i++){
+			switch(servos[i].recState){
+			case running:
+				if (commands[i] == 'p' || commands[i] == 'P'){
+					servos[i].recState = paused;
+					commands[i] = 'x';
+					break;
+				}
+				else if (commands[i] == 's' || commands[i] == 'S'){
+					servos[i].recipeStep = 0;
+					servos[i].loopCount = 0;
+					servos[i].loopIters = 0;
+					servos[i].loopStep = 0;
+					servos[i].loopRecipeLen = 0;
+					servos[i].inLoop = false;
+					servos[i].waitStep = 1;
+					servos[i].position = 0;
+				}
+				perform_recipe_step(&servos[i]);
+				commands[i] = 'x';
+				break;
+			case paused:
+				if (commands[i] == 'c' || commands[i] == 'C'){
+					servos[i].recState = running;
+					perform_recipe_step(&servos[i]);
+					commands[i] = 'x';
+					break;
+				}
+				else if (commands[i] == 's' || commands[i] == 'S'){
+					servos[i].recipeStep = 0;
+					servos[i].recState = running;
+					servos[i].loopCount = 0;
+					servos[i].loopIters = 0;
+					servos[i].loopStep = 0;
+					servos[i].loopRecipeLen = 0;
+					servos[i].inLoop = false;
+					servos[i].waitStep = 1;
+					servos[i].position = 0;
+					perform_recipe_step(&servos[i]);
+					commands[i] = 'x';
+					break;
+				}
+				else if (commands[i] == 'r' || commands[i] == 'R'){
+					if (servos[i].position != 0){
+						servos[i].position -= 1;
+						if (servos[i].id == 1){
+							TIM2->CCR1 = 6 + (4 * servos[i].position);
+						}
+						else {
+							TIM2->CCR2 = 6 + (4 * servos[i].position);
+						}
+					}
+					commands[i] = 'x';
+					break;
+				}
+				else if (commands[i] == 'l' || commands[i] == 'L'){
+					if (servos[i].position != 5){
+						servos[i].position += 1;
+						if (servos[i].id == 1){
+							TIM2->CCR1 = 6 + (4 * servos[i].position);
+						}
+						else {
+							TIM2->CCR2 = 6 + (4 * servos[i].position);
+						}
+					}
+					commands[i] = 'x';
+					break;
+				}
+				commands[i] = 'x';
+				break;
+			case ended:
+				if (commands[i] == 's' || commands[i] == 'S'){
+					servos[i].recipeStep = 0;
+					servos[i].recState = running;
+					servos[i].loopCount = 0;
+					servos[i].loopIters = 0;
+					servos[i].loopStep = 0;
+					servos[i].loopRecipeLen = 0;
+					servos[i].inLoop = false;
+					servos[i].waitStep = 1;
+					servos[i].position = 0;
+					perform_recipe_step(&servos[i]);
+					commands[i] = 'x';
+					break;
+				}
+				commands[i] = 'x';
+				break;
+			case error:
+				if (commands[i] == 's' || commands[i] == 'S'){
+					servos[i].recipeStep = 0;
+					servos[i].recState = running;
+					servos[i].loopCount = 0;
+					servos[i].loopIters = 0;
+					servos[i].loopStep = 0;
+					servos[i].loopRecipeLen = 0;
+					servos[i].inLoop = false;
+					servos[i].waitStep = 1;
+					servos[i].position = 0;
+					perform_recipe_step(&servos[i]);
+					commands[i] = 'x';
+					break;
+				}
+				commands[i] = 'x';
+				break;
+			}
+
+		}
+		while(!step_done){};	//wait at end until 300ms passed total
+		counter = 0;
+		step_done = false;
+	}
+}
 
 
 

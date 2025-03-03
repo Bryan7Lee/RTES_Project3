@@ -14,13 +14,25 @@
 #define LOOP (128)
 #define END_LOOP (160)
 
-#define USER_COMMAND_INPUT_LENGTH (4)
+enum recipeState{
+	running,
+	paused,
+	ended,
+	error
+};
 
 typedef struct{
+	int id;
 	int recipeStep;
+	enum recipeState recState;
+	int loopCount;
+	int loopIters;
+	int loopStep;
+	int loopRecipeLen;
+	_Bool inLoop;
+	int waitStep;
+	int position;
 } servo;
-
-
 
 char UART_ReceiveChar(void);
 void UART_Write(char *str);
@@ -30,5 +42,10 @@ void UART_Delay(uint32_t us);
 void run_demo(void);
 servo run_recipe(uint32_t recipe[15]);
 void SysTick_Handler(void);
+int printf (const char *format, ...);
+void perform_recipe_step(servo *serv);
+void run_demo(void);
+
+
 
 #endif /* INC_DEMO_H_ */
